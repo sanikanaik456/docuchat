@@ -1,50 +1,55 @@
 import streamlit as st
+
 from rag_pipeline import (
-    extract_text, chunk_text,
-    search_chunks, generate_answer
+    extract_text,
+    chunk_text,
+    search_chunks_tfidf,
+    generate_answer,
 )
 
-st.set_page_config(
-    page_title="DocuChat",
-    page_icon="📄"
-)
+st.set_page_config(page_title="DocuChat", page_icon="📄", layout="wide")
 
 st.title("📄 DocuChat")
-st.subheader("Upload a PDF and ask questions!")
+st.markdown("*Upload a PDF and ask questions about it.*")
 
-api_key = st.sidebar.text_input(
-    "Enter Gemini API Key", type="password"
-)
+with st.sidebar:
+    st.header("Settings")
+    api_key = st.text_input("Enter Gemini API Key", type="password")
+    st.caption("Retrieval: TF-IDF over 250-word chunks")
 
-uploaded_file = st.file_uploader(
-    "Upload your PDF", type="pdf"
-)
+uploaded_file = st.file_uploader("Upload a PDF", type="pdf")
 
-if uploaded_file and api_key:
-    with st.spinner("Processing your document..."):
-        text = extract_text(uploaded_file)
-        chunks = chunk_text(text)
-        st.success(f"✅ Document processed! "
-                  f"({len(chunks)} chunks created)")
+if uploaded_file:
+    if st.session_state.get("file_name") != uploaded_file.name:
+        with st.spinner("Reading the PDF..."):
+            text = extract_text(uploaded_file)
+        st.session_state["file_name"] = uploaded_file.name
+        st.session_state["chunks"] = chunk_text(text, chunk_size=250) if text.strip() else []
 
-    st.subheader("💬 Ask questions about your document")
-    query = st.text_input("Your question:")
+    chunks = st.session_state["chunks"]
 
-    if query:
-        with st.spinner("Finding answer..."):
-            relevant_chunks = search_chunks(query, chunks)
-            answer = generate_answer(
-                query, relevant_chunks, api_key
-            )
+    if not chunks:
+        st.warning("No readable text found. The PDF may be a scanned image.")
+    else:
+        st.success(f"Ready: {len(chunks)} chunks from {uploaded_file.name}")
+        query = st.text_input("Ask a question about the document")
 
-        st.subheader("✅ Answer:")
-        st.write(answer)
-
-        with st.expander("📚 Source chunks used:"):
-            for i, chunk in enumerate(relevant_chunks):
-                st.write(f"**Chunk {i+1}:**")
-                st.write(chunk)
-                st.divider()
-else:
-    st.info("👈 Enter your Gemini API key "
-           "and upload a PDF to get started!")
+        if st.button("Get answer", type="primary"):
+            if not api_key:
+                st.error("Please enter your Gemini API key in the sidebar.")
+            elif not query.strip():
+                st.error("Please type a question.")
+            else:
+                with st.spinner("Searching and generating an answer..."):
+                    try:
+                        relevant = search_chunks_tfidf(query, chunks)
+                        answer = generate_answer(query, relevant, api_key)
+                    except Exception as e:
+                        st.error(f"Something went wrong: {e}")
+                    else:
+                        st.subheader("Answer")
+                        st.write(answer)
+                        with st.expander("Passages sent to Gemini"):
+                            for i, chunk in enumerate(relevant, 1):
+                                st.markdown(f"Passage {i}")
+                                st.write(chunk[:1500])
